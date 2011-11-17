@@ -127,5 +127,28 @@ void prom_putchar(char c)
 	}
 }
 
+void prom_printf(char *fmt, ...)
+{
+	va_list args;
+	char ppbuf[1024];
+	char *bptr;
+
+	va_start(args, fmt);
+	vsprintf(ppbuf, fmt, args);
+
+	bptr = ppbuf;
+
+	while (*bptr != 0) {
+		if (*bptr == '\n')
+			prom_putchar('\r');
+
+		prom_putchar(*bptr++);
+	}
+	va_end(args);
+	/* wait for fifo empty */
+//	while ((ip3106_fifo(UART_BASE, pnx8550_console_port) & PNX8XXX_UART_FIFO_RBRTHR) == 0)
+//	    ;
+}
+
 EXPORT_SYMBOL(get_ethernet_addr);
 EXPORT_SYMBOL(str2eaddr);

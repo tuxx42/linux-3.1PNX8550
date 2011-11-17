@@ -73,7 +73,7 @@ static irqreturn_t pnx8xxx_timer_interrupt(int irq, void *dev_id)
 	struct clock_event_device *c = dev_id;
 
 	if(c == NULL || c->event_handler  == NULL) {
-		//prom_printf("dev_id%s == NULL\n", (!dev_id)?"":"->event_handler");
+		prom_printf("dev_id%s == NULL\n", (!dev_id)?"":"->event_handler");
 		return IRQ_HANDLED;
 	}
 	c->event_handler(c);
