@@ -37,13 +37,16 @@ char * prom_getcmdline(void)
 
 void __init prom_init_cmdline(void)
 {
-	int i;
-
-	arcs_cmdline[0] = '\0';
-	for (i = 0; i < prom_argc; i++) {
-		strcat(arcs_cmdline, prom_argv[i]);
-		strcat(arcs_cmdline, " ");
-	}
+        int i;
+        char *c = &(arcs_cmdline[0]);
+ 
+        for(i = 1; i < prom_argc; i++) {
+                strcpy(c, prom_argv[i]);
+                c += strlen(prom_argv[i]);
+                if(i < prom_argc-1)
+                        *c++ = ' '; 
+        }    
+        *c = 0; 
 }
 
 char *prom_getenv(char *envname)
