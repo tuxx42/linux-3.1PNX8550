@@ -35,10 +35,31 @@
 
 static unsigned long cpj;
 
+
 static cycle_t hpt_read(struct clocksource *cs)
 {
 	return read_c0_count2();
 }
+
+static int pnx8xxx_set_next_event(unsigned long delta,
+				struct clock_event_device *evt)
+{
+	write_c0_compare(delta);
+	return 0;
+}
+
+static void pnx8xxx_set_mode(enum clock_event_mode mode, struct clock_event_device *cd) {
+	prom_printf("called pnx8xxx_set_mode()\n");
+}
+
+static struct clock_event_device pnx8xxx_clockevent = {
+	.name		= "pnx8xxx_clockevent",
+	.features	= CLOCK_EVT_FEAT_ONESHOT,
+	.set_next_event = pnx8xxx_set_next_event,
+	.set_mode	= pnx8xxx_set_mode,
+	.cpumask	= cpu_all_mask,
+	.rating		= 200,
+};
 
 static struct clocksource pnx_clocksource = {
 	.name		= "pnx8xxx",
@@ -51,16 +72,21 @@ static irqreturn_t pnx8xxx_timer_interrupt(int irq, void *dev_id)
 {
 	struct clock_event_device *c = dev_id;
 
-	/* clear MATCH, signal the event */
+	if(c == NULL || c->event_handler  == NULL) {
+		//prom_printf("dev_id%s == NULL\n", (!dev_id)?"":"->event_handler");
+		return IRQ_HANDLED;
+	}
 	c->event_handler(c);
 
 	return IRQ_HANDLED;
 }
 
+
 static struct irqaction pnx8xxx_timer_irq = {
 	.handler	= pnx8xxx_timer_interrupt,
 	.flags		= IRQF_DISABLED | IRQF_PERCPU | IRQF_TIMER,
 	.name		= "pnx8xxx_timer",
+	.dev_id		= &pnx8xxx_clockevent,
 };
 
 static irqreturn_t monotonic_interrupt(int irq, void *dev_id)
@@ -74,19 +100,6 @@ static struct irqaction monotonic_irqaction = {
 	.handler = monotonic_interrupt,
 	.flags = IRQF_DISABLED | IRQF_TIMER,
 	.name = "Monotonic timer",
-};
-
-static int pnx8xxx_set_next_event(unsigned long delta,
-				struct clock_event_device *evt)
-{
-	write_c0_compare(delta);
-	return 0;
-}
-
-static struct clock_event_device pnx8xxx_clockevent = {
-	.name		= "pnx8xxx_clockevent",
-	.features	= CLOCK_EVT_FEAT_ONESHOT,
-	.set_next_event = pnx8xxx_set_next_event,
 };
 
 static inline void timer_ack(void)
