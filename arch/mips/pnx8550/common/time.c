@@ -34,7 +34,7 @@
 #include <cm.h>
 
 static unsigned long cpj;
-
+extern void prom_printf(char *fmt, ...);
 
 static cycle_t hpt_read(struct clocksource *cs)
 {
