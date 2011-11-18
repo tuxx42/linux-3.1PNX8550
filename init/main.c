@@ -521,7 +521,6 @@ asmlinkage void __init start_kernel(void)
 	pidhash_init();
 	vfs_caches_init_early();
 	sort_main_extable();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	trap_init();
 	mm_init();
 
@@ -541,7 +540,6 @@ asmlinkage void __init start_kernel(void)
 				"enabled *very* early, fixing it\n");
 		local_irq_disable();
 	}
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	idr_init_cache();
 	perf_event_init();
 	rcu_init();
@@ -554,7 +552,6 @@ asmlinkage void __init start_kernel(void)
 	hrtimers_init();
 	softirq_init();
 	timekeeping_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	time_init();
 	profile_init();
 	call_function_init();
@@ -563,7 +560,6 @@ asmlinkage void __init start_kernel(void)
 				 "enabled early\n");
 	early_boot_irqs_disabled = false;
 	local_irq_enable();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 
 	/* Interrupts are enabled now so all GFP allocations are safe. */
 	gfp_allowed_mask = __GFP_BITS_MASK;
@@ -576,13 +572,10 @@ asmlinkage void __init start_kernel(void)
 	 * this. But we do want output early, in case something goes wrong.
 	 */
 	console_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	if (panic_later)
 		panic(panic_later, panic_param);
 
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	lockdep_info();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 
 	/*
 	 * Need to run this when irqs are enabled, because it wants
@@ -590,7 +583,6 @@ asmlinkage void __init start_kernel(void)
 	 * too:
 	 */
 	locking_selftest();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 
 #ifdef CONFIG_BLK_DEV_INITRD
 	if (initrd_start && !initrd_below_start_ok &&
@@ -603,65 +595,40 @@ asmlinkage void __init start_kernel(void)
 	}
 #endif
 	page_cgroup_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	enable_debug_pagealloc();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	debug_objects_mem_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	kmemleak_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	setup_per_cpu_pageset();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	numa_policy_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	if (late_time_init)
 		late_time_init();
 	sched_clock_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	calibrate_delay();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	pidmap_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	anon_vma_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 #ifdef CONFIG_X86
 	if (efi_enabled)
 		efi_enter_virtual_mode();
 #endif
 	thread_info_cache_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	cred_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	fork_init(totalram_pages);
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	proc_caches_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	buffer_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	key_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	security_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	dbg_late_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	vfs_caches_init(totalram_pages);
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	signals_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	/* rootfs populating might need page-writeback */
 	page_writeback_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 #ifdef CONFIG_PROC_FS
 	proc_root_init();
 #endif
 	cgroup_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	cpuset_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	taskstats_init_early();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	delayacct_init();
-	printk("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 
 	check_bugs();
 
