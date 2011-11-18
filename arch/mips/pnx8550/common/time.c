@@ -35,6 +35,7 @@
 
 static unsigned long cpj;
 extern void prom_printf(char *fmt, ...);
+extern void prom_flush(void);
 
 static cycle_t hpt_read(struct clocksource *cs)
 {
@@ -57,8 +58,8 @@ static struct clock_event_device pnx8xxx_clockevent = {
 	.features	= CLOCK_EVT_FEAT_ONESHOT,
 	.set_next_event = pnx8xxx_set_next_event,
 	.set_mode	= pnx8xxx_set_mode,
-	.cpumask	= cpu_all_mask,
-	.rating		= 200,
+//	.cpumask	= cpu_all_mask,
+//	.rating		= 200,
 };
 
 static struct clocksource pnx_clocksource = {
@@ -71,10 +72,17 @@ static struct clocksource pnx_clocksource = {
 static irqreturn_t pnx8xxx_timer_interrupt(int irq, void *dev_id)
 {
 	struct clock_event_device *c = dev_id;
+	static int i = 0;
 
 	if(c == NULL || c->event_handler  == NULL) {
-		prom_printf("dev_id%s == NULL\n", (!dev_id)?"":"->event_handler");
+		//prom_printf("dev_id%s == NULL\n", (!dev_id)?"":"->event_handler");
+		//prom_flush();
 		return IRQ_HANDLED;
+	}
+	if(i == 0) {
+		i++;
+		prom_printf("dev_id->event_handler = %p\n", c->event_handler);
+		prom_flush();
 	}
 	c->event_handler(c);
 
@@ -115,7 +123,10 @@ __init void plat_time_init(void)
 	unsigned int p;
 	unsigned int pow2p;
 
-	pnx8xxx_clockevent.cpumask = cpu_none_mask;
+	pnx8xxx_clockevent.cpumask = cpu_all_mask;
+	//prom_printf('a');
+
+	//prom_printf("clockevents_register_device(&pnx8xxx_clockevent);\n");
 	clockevents_register_device(&pnx8xxx_clockevent);
 	clocksource_register(&pnx_clocksource);
 
