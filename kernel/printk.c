@@ -880,8 +880,6 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 				  sizeof(printk_buf) - printed_len, fmt, args);
 
 	p = printk_buf;
-	prom_printf("%s", printk_buf);
-	prom_flush();
 
 	/* Read log level and handle special printk prefix */
 	plen = log_prefix(p, &current_log_level, &special);
