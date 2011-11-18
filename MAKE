@@ -1,0 +1,15 @@
+#!/bin/sh
+export NM=/opt/mips/usr/mipsel-unknown-linux-uclibc/bin/nm
+export OBJCOPY=/opt/mips/usr/mipsel-unknown-linux-uclibc/bin/objcopy
+
+rm -f vmlinux.bin.gz 
+
+make ARCH=mips CROSS_COMPILE=/opt/mips/usr/mipsel-unknown-linux-uclibc/bin/ -j10
+
+$OBJCOPY -O binary --remove-section=.reginfo --remove-section=.mdebug --remove-section=.comment --remove-section=.note --remove-section=.pdr --remove-section=.options --remove-section=.MIPS.options vmlinux vmlinux.bin
+
+gzip -9 vmlinux.bin
+
+mkimage -A mips -O linux -T kernel -C gzip -a 0x80060000 -e 0x$($NM vmlinux | grep kernel_entry | cut -f1 -d ' ') -n MIPS -d vmlinux.bin.gz uImage
+
+# cp uImage /opt/emlix/lp/tftpboot/u-boot
