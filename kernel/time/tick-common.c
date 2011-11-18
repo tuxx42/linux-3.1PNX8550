@@ -23,6 +23,7 @@
 
 #include "tick-internal.h"
 
+extern void prom_printf(char *ftm, ...);
 /*
  * Tick devices
  */
@@ -154,6 +155,7 @@ static void tick_setup_device(struct tick_device *td,
 	ktime_t next_event;
 	void (*handler)(struct clock_event_device *) = NULL;
 
+	prom_printf("static void tick_setup_device(struct tick_device *td, struct clock_event_device *newdev, int cpu, const struct cpumask *cpumask)\n");
 	/*
 	 * First device setup ?
 	 */
@@ -214,9 +216,12 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 
 	raw_spin_lock_irqsave(&tick_device_lock, flags);
 
+	prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 	cpu = smp_processor_id();
-	if (!cpumask_test_cpu(cpu, newdev->cpumask))
+	if (!cpumask_test_cpu(cpu, newdev->cpumask)) {
+		prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 		goto out_bc;
+	}
 
 	td = &per_cpu(tick_cpu_device, cpu);
 	curdev = td->evtdev;
@@ -228,6 +233,7 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 		 * If the cpu affinity of the device interrupt can not
 		 * be set, ignore it.
 		 */
+		prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 		if (!irq_can_set_affinity(newdev->irq))
 			goto out_bc;
 
@@ -235,6 +241,7 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 		 * If we have a cpu local device already, do not replace it
 		 * by a non cpu local device
 		 */
+		prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 		if (curdev && cpumask_equal(curdev->cpumask, cpumask_of(cpu)))
 			goto out_bc;
 	}
@@ -243,6 +250,7 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 	 * If we have an active device, then check the rating and the oneshot
 	 * feature.
 	 */
+	prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 	if (curdev) {
 		/*
 		 * Prefer one shot capable devices !
@@ -257,6 +265,7 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 			goto out_bc;
 	}
 
+	prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 	/*
 	 * Replace the eventually existing device by the new
 	 * device. If the current device is the broadcast device, do
@@ -266,11 +275,13 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 		clockevents_shutdown(curdev);
 		curdev = NULL;
 	}
+	prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 	clockevents_exchange_device(curdev, newdev);
 	tick_setup_device(td, newdev, cpu, cpumask_of(cpu));
 	if (newdev->features & CLOCK_EVT_FEAT_ONESHOT)
 		tick_oneshot_notify();
 
+	prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 	raw_spin_unlock_irqrestore(&tick_device_lock, flags);
 	return NOTIFY_STOP;
 
@@ -365,6 +376,7 @@ static int tick_notify(struct notifier_block *nb, unsigned long reason,
 	switch (reason) {
 
 	case CLOCK_EVT_NOTIFY_ADD:
+		prom_printf("%s %s:%d\n",__func__, __FILE__, __LINE__);
 		return tick_check_new_device(dev);
 
 	case CLOCK_EVT_NOTIFY_BROADCAST_ON:

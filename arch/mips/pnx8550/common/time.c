@@ -39,6 +39,7 @@ extern void prom_flush(void);
 
 static cycle_t hpt_read(struct clocksource *cs)
 {
+	printk("%s\n", __func__);
 	return read_c0_count2();
 }
 
@@ -50,7 +51,7 @@ static int pnx8xxx_set_next_event(unsigned long delta,
 }
 
 static void pnx8xxx_set_mode(enum clock_event_mode mode, struct clock_event_device *cd) {
-	prom_printf("called pnx8xxx_set_mode()\n");
+	printk("called pnx8xxx_set_mode()\n");
 }
 
 static struct clock_event_device pnx8xxx_clockevent = {
@@ -58,7 +59,8 @@ static struct clock_event_device pnx8xxx_clockevent = {
 	.features	= CLOCK_EVT_FEAT_ONESHOT,
 	.set_next_event = pnx8xxx_set_next_event,
 	.set_mode	= pnx8xxx_set_mode,
-//	.cpumask	= cpu_all_mask,
+	.mult		= 1,
+	.cpumask	= cpu_all_mask,
 //	.rating		= 200,
 };
 
@@ -72,18 +74,8 @@ static struct clocksource pnx_clocksource = {
 static irqreturn_t pnx8xxx_timer_interrupt(int irq, void *dev_id)
 {
 	struct clock_event_device *c = dev_id;
-	static int i = 0;
 
-	if(c == NULL || c->event_handler  == NULL) {
-		//prom_printf("dev_id%s == NULL\n", (!dev_id)?"":"->event_handler");
-		//prom_flush();
-		return IRQ_HANDLED;
-	}
-	if(i == 0) {
-		i++;
-		prom_printf("dev_id->event_handler = %p\n", c->event_handler);
-		prom_flush();
-	}
+	printk("pnx8xxx_timer_interrupt(): jiffies %ld\n", (long)get_jiffies_64());
 	c->event_handler(c);
 
 	return IRQ_HANDLED;
@@ -123,12 +115,7 @@ __init void plat_time_init(void)
 	unsigned int p;
 	unsigned int pow2p;
 
-	pnx8xxx_clockevent.cpumask = cpu_all_mask;
-	//prom_printf('a');
-
-	//prom_printf("clockevents_register_device(&pnx8xxx_clockevent);\n");
 	clockevents_register_device(&pnx8xxx_clockevent);
-	clocksource_register(&pnx_clocksource);
 
 	/* Timer 1 start */
 	configPR = read_c0_config7();
@@ -162,13 +149,18 @@ __init void plat_time_init(void)
 	 * HZ timer interrupts per second.
 	 */
 	mips_hpt_frequency = 27UL * ((1000000UL * n)/(m * pow2p));
+	pnx_clocksource.rating = 200 + mips_hpt_frequency / 10000000;
 	cpj = DIV_ROUND_CLOSEST(mips_hpt_frequency, HZ);
+
 	write_c0_count(0);
 	timer_ack();
 
 	/* Setup Timer 2 */
 	write_c0_count2(0);
 	write_c0_compare2(0xffffffff);
+
+	prom_printf("calling clocksource_register\n");
+	clocksource_register_hz(&pnx_clocksource, mips_hpt_frequency);
 
 	setup_irq(PNX8550_INT_TIMER1, &pnx8xxx_timer_irq);
 	setup_irq(PNX8550_INT_TIMER2, &monotonic_irqaction);

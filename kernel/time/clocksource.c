@@ -31,6 +31,7 @@
 #include <linux/tick.h>
 #include <linux/kthread.h>
 
+extern void prom_printf(char *fmt, ...);
 void timecounter_init(struct timecounter *tc,
 		      const struct cyclecounter *cc,
 		      u64 start_tstamp)
@@ -704,6 +705,8 @@ EXPORT_SYMBOL_GPL(__clocksource_register_scale);
 int clocksource_register(struct clocksource *cs)
 {
 	/* calculate max idle time permitted for this clocksource */
+	printk("%ld\n",(long)cs->max_idle_ns);
+	prom_printf("prom: %ld\n",(long)cs->max_idle_ns);
 	cs->max_idle_ns = clocksource_max_deferment(cs);
 
 	mutex_lock(&clocksource_mutex);

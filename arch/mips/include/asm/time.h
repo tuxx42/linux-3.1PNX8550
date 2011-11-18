@@ -64,6 +64,7 @@ static inline int mips_clockevent_init(void)
 #elif defined(CONFIG_CEVT_R4K)
 	return r4k_clockevent_init();
 #else
+	// this is reached for pnx8550 (tested with printk)
 	return -ENXIO;
 #endif
 }

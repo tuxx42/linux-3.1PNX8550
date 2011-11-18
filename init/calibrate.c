@@ -11,6 +11,8 @@
 #include <linux/smp.h>
 #include <linux/percpu.h>
 
+extern void prom_printf(char *fmt,...);
+
 unsigned long lpj_fine;
 unsigned long preset_lpj;
 static int __init lpj_setup(char *str)
@@ -195,6 +197,7 @@ static unsigned long __cpuinit calibrate_delay_converge(void)
 	/* Go .. */
 	ticks = jiffies;
 	do {
+		printk("RELEASED %s %s:%d\n", __func__, __FILE__, __LINE__);
 		if (++trial_in_band == (1<<band)) {
 			++band;
 			trial_in_band = 0;

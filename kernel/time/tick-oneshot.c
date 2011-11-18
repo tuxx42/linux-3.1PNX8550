@@ -20,6 +20,7 @@
 #include <linux/sched.h>
 
 #include "tick-internal.h"
+extern void prom_printf(char *fmt, ...);
 
 /* Limit min_delta to a jiffie */
 #define MIN_DELTA_LIMIT		(NSEC_PER_SEC / HZ)
@@ -118,6 +119,7 @@ void tick_setup_oneshot(struct clock_event_device *newdev,
 			void (*handler)(struct clock_event_device *),
 			ktime_t next_event)
 {
+	prom_printf("void tick_setup_oneshot(struct clock_event_device *newdev, void (*handler)(struct clock_event_device *), ktime_t next_event)\n");
 	newdev->event_handler = handler;
 	clockevents_set_mode(newdev, CLOCK_EVT_MODE_ONESHOT);
 	tick_dev_program_event(newdev, next_event, 1);
@@ -131,6 +133,7 @@ int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))
 	struct tick_device *td = &__get_cpu_var(tick_cpu_device);
 	struct clock_event_device *dev = td->evtdev;
 
+	prom_printf("int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))\n");
 	if (!dev || !(dev->features & CLOCK_EVT_FEAT_ONESHOT) ||
 		    !tick_device_is_functional(dev)) {
 

@@ -44,6 +44,9 @@
 
 #include <asm/uaccess.h>
 
+extern int prom_printf(char *fmt, ...);
+extern int prom_flush();
+
 /*
  * Architectures can override it:
  */
@@ -877,6 +880,8 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 				  sizeof(printk_buf) - printed_len, fmt, args);
 
 	p = printk_buf;
+	prom_printf("%s", printk_buf);
+	prom_flush();
 
 	/* Read log level and handle special printk prefix */
 	plen = log_prefix(p, &current_log_level, &special);
@@ -1411,9 +1416,11 @@ early_param("keep_bootcon", keep_bootcon_setup);
 void register_console(struct console *newcon)
 {
 	int i;
+	static int imba=0;
 	unsigned long flags;
 	struct console *bcon = NULL;
 
+	prom_printf("%s (%s:%d)\n", __func__, __FILE__, __LINE__);
 	/*
 	 * before we register a new CON_BOOT console, make sure we don't
 	 * already have a valid console
@@ -1558,6 +1565,7 @@ void register_console(struct console *newcon)
 			(newcon->flags & CON_BOOT) ? "boot" : "" ,
 			newcon->name, newcon->index);
 	}
+	printk("imba is %d\n", imba);
 }
 EXPORT_SYMBOL(register_console);
 

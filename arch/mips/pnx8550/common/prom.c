@@ -22,8 +22,8 @@
 
 extern int prom_argc;
 extern char **prom_argv, **prom_envp;
-char putchar_buf[1024];
-int prom_flushed = 1;
+char putchar_buf[1024*4];
+int prom_flushed = 0;
 
 typedef struct
 {
@@ -136,26 +136,28 @@ void prom_printf(char *fmt, ...)
 	char *bptr;
 
 	va_start(args, fmt);
-	vsprintf(putchar_buf, fmt, args);
+	vsprintf((putchar_buf+prom_flushed), fmt, args);
+
+	prom_flushed += strlen(putchar_buf);
 
 	bptr = ppbuf;
 	va_end(args);
-	prom_flushed = 0;
 }
 
 void prom_flush(void)
 {
 	char *bptr = putchar_buf;
 
-	if(prom_flushed == 0) {
+	if(prom_flushed != 0) {
 		while (*bptr != 0) {
-			if (*bptr == '\n')
+			if (*bptr == '\n') {
 				prom_putchar('\r');
+			}
 
 			prom_putchar(*bptr++);
 		}
 	}
-	prom_flushed = 1;
+	prom_flushed = 0;
 	/* wait for fifo empty */
 //	while ((ip3106_fifo(UART_BASE, pnx8550_console_port) & PNX8XXX_UART_FIFO_RBRTHR) == 0)
 //	    ;

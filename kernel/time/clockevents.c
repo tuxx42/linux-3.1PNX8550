@@ -21,6 +21,8 @@
 
 #include "tick-internal.h"
 
+extern void prom_printf(char *c, ...);
+
 /* The registered clock event devices */
 static LIST_HEAD(clockevent_devices);
 static LIST_HEAD(clockevents_released);
@@ -181,6 +183,7 @@ void clockevents_register_device(struct clock_event_device *dev)
 {
 	unsigned long flags;
 
+	prom_printf("void clockevents_register_device(struct clock_event_device *dev)\n");
 	BUG_ON(dev->mode != CLOCK_EVT_MODE_UNUSED);
 	if (!dev->cpumask) {
 		WARN_ON(num_possible_cpus() > 1);
