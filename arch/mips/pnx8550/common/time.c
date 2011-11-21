@@ -35,21 +35,26 @@
 
 static unsigned long cpj;
 static enum clock_event_mode clockmode;
-extern void prom_printf(char *fmt, ...);
 extern void prom_flush(void);
 
 static cycle_t hpt_read(struct clocksource *cs)
 {
 	return read_c0_count2();
 }
-
 static int pnx8xxx_set_next_event(unsigned long delta,
 				struct clock_event_device *evt)
 {
-//	printk(KERN_INFO "pnx8xxx_set_next_event(%lu)\n", delta);
-	write_c0_count(0);
+	unsigned long cnt;
+	int res;
+
+	//printk(KERN_INFO "pnx8xxx_set_next_event d: %lu c: %lu c+d: %lu\n", delta, cnt, cnt+delta);
+	cnt = read_c0_count();
+	cnt += delta;
 	write_c0_compare(delta);
-	return 0;
+
+	res = ((int)(read_c0_count() - cnt) >= 0) ? -ETIME : 0;
+
+	return res;
 }
 
 static void pnx8xxx_set_mode(enum clock_event_mode mode, struct clock_event_device *cd) {
@@ -62,9 +67,7 @@ static struct clock_event_device pnx8xxx_clockevent = {
 	.features	= CLOCK_EVT_FEAT_ONESHOT,
 	.set_next_event = pnx8xxx_set_next_event,
 	.set_mode	= pnx8xxx_set_mode,
-	.mult		= 1,
 	.cpumask	= cpu_all_mask,
-	.rating		= 200,
 };
 
 static struct clocksource pnx_clocksource = {
@@ -79,11 +82,12 @@ static irqreturn_t pnx8xxx_timer_interrupt(int irq, void *dev_id)
 	struct clock_event_device *c = dev_id;
 
 //	printk("pnx8xxx_timer_interrupt(): jiffies %ld\n", (long)get_jiffies_64());
-	write_c0_count(0);
-	if (clockmode == CLOCK_EVT_MODE_ONESHOT)
-		write_c0_compare(-1);
-	else
+	//write_c0_count(0);
+//	if (clockmode == CLOCK_EVT_MODE_ONESHOT)
 		write_c0_compare(read_c0_compare());
+//	else
+//		write_c0_compare(read_c0_compare());
+//	printk("handled\n");
 	c->event_handler(c);
 
 	return IRQ_HANDLED;
@@ -99,7 +103,6 @@ static struct irqaction pnx8xxx_timer_irq = {
 
 static irqreturn_t monotonic_interrupt(int irq, void *dev_id)
 {
-	/* Timer 2 clear interrupt */
 	write_c0_compare2(-1);
 	return IRQ_HANDLED;
 }
@@ -122,10 +125,12 @@ __init void plat_time_init(void)
 	unsigned int m;
 	unsigned int p;
 	unsigned int pow2p;
+	unsigned int cpu = smp_processor_id();
 
         /* PLL0 sets MIPS clock (PLL1 <=> TM1, PLL6 <=> TM2, PLL5 <=> mem) */
         /* (but only if CLK_MIPS_CTL select value [bits 3:1] is 1:  FIXME) */
 
+	/* read random registers */
         n = (PNX8550_CM_PLL0_CTL & PNX8550_CM_PLL_N_MASK) >> 16;
         m = (PNX8550_CM_PLL0_CTL & PNX8550_CM_PLL_M_MASK) >> 8;
         p = (PNX8550_CM_PLL0_CTL & PNX8550_CM_PLL_P_MASK) >> 2;
@@ -138,16 +143,24 @@ __init void plat_time_init(void)
 	 * (a.k.a. 8-10).  Divide by HZ for a timer offset that results in
 	 * HZ timer interrupts per second.
 	 */
+	// bogomips 249.34
 	mips_hpt_frequency = 27UL * ((1000000UL * n)/(m * pow2p));
-	pnx_clocksource.rating = 200 + mips_hpt_frequency / 10000000;
+	pnx8xxx_clockevent.rating = 200 + mips_hpt_frequency / 10000000;
+	pnx8xxx_clockevent.cpumask = cpumask_of(cpu);
 	cpj = DIV_ROUND_CLOSEST(mips_hpt_frequency, HZ);
 
-	clockevents_calc_mult_shift(&pnx8xxx_clockevent, mips_hpt_frequency, 16);
-	pnx8xxx_clockevent.max_delta_ns = clockevent_delta2ns(0xffffffff, &pnx8xxx_clockevent);
+	clockevents_calc_mult_shift(&pnx8xxx_clockevent, mips_hpt_frequency, 8);
+	pnx8xxx_clockevent.max_delta_ns = clockevent_delta2ns(0x7fffffff, &pnx8xxx_clockevent);
 	pnx8xxx_clockevent.min_delta_ns = clockevent_delta2ns(0x300, &pnx8xxx_clockevent);
 	clockevents_register_device(&pnx8xxx_clockevent);
 
-	printk(KERN_INFO "clockevent %u %u %u\n", mips_hpt_frequency, pnx8xxx_clockevent.mult, pnx8xxx_clockevent.shift);
+	printk("mips_hpt_frequency: %d\n", mips_hpt_frequency);
+	printk("pnx_clocksource.rating: %d\n", pnx_clocksource.rating);
+	printk("cpj: %ld\n", cpj);
+	printk("pnx8xxx_clockevent.mult: %d\n", pnx8xxx_clockevent.mult);
+	printk("pnx8xxx_clockevent.min_delta_ns: %llu\n",pnx8xxx_clockevent.min_delta_ns);
+	printk("pnx8xxx_clockevent.max_delta_ns: %llu\n",pnx8xxx_clockevent.max_delta_ns);
+	printk(KERN_INFO "clockevent %u %u %u registered\n", mips_hpt_frequency, pnx8xxx_clockevent.mult, pnx8xxx_clockevent.shift);
 
 	/* Timer 1 start */
 	configPR = read_c0_config7();
@@ -171,8 +184,7 @@ __init void plat_time_init(void)
 	write_c0_count2(0);
 	write_c0_compare2(0xffffffff);
 
-	prom_printf("calling clocksource_register\n");
-	clocksource_register_hz(&pnx_clocksource, mips_hpt_frequency);
+	clocksource_register(&pnx_clocksource);
 
 	setup_irq(PNX8550_INT_TIMER1, &pnx8xxx_timer_irq);
 	setup_irq(PNX8550_INT_TIMER2, &monotonic_irqaction);
