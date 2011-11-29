@@ -1,0 +1,3 @@
+CROSS_COMPILE=/opt/emlix/netdcu6/bin/mipsel-linux-  make ARCH=mips -C ../ SUBDIRS=`pwd` modules
+rm *.o modules.* i2c-algo-IP0105.mod.c Module.symvers
+scp i2c-algo-IP0105.ko  root@192.168.2.163:
