@@ -178,7 +178,7 @@ static struct i2c_pnx0105_dev pnx833x_i2c_dev[] = {
 };
 
 static struct platform_device pnx833x_i2c0_device = {
-	.name		= "i2c-pnx0105",
+	.name		= "IP0105",
 	.id		= 0,
 	.dev = {
 		.platform_data = &pnx833x_i2c_dev[0],
@@ -188,7 +188,7 @@ static struct platform_device pnx833x_i2c0_device = {
 };
 
 static struct platform_device pnx833x_i2c1_device = {
-	.name		= "i2c-pnx0105",
+	.name		= "IP0105",
 	.id		= 1,
 	.dev = {
 		.platform_data = &pnx833x_i2c_dev[1],
