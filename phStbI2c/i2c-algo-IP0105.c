@@ -30,6 +30,7 @@ Standard include files:
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/fs.h>
+#include <linux/spinlock.h>
 
 /*
 -------------------------------------------------------------------------------
@@ -88,16 +89,27 @@ typedef enum {
 	I2C_IP0105_MODE_SLAVE_RECEIVER,
 } i2c_mode;
 
-struct i2c_algo_data {
-	int			mst_txbuflen;
-	int			mst_txbufindex;
-	unsigned char *		mst_txbuf;
-	unsigned char *		mst_rxbuf;
-	int			mst_rxbuflen;
-	int			mst_rxbufindex;
-	int			mst_address;
-	unsigned long		mst_status;
-};
+typedef enum {
+	IP0105_I2C_ACTION_INVALID,
+	IP0105_I2C_ACTION_CONTINUE,
+	IP0105_I2C_ACTION_SEND_START,
+	IP0105_I2C_ACTION_SEND_RESTART,
+	IP0105_I2C_ACTION_SEND_ADDR,
+	IP0105_I2C_ACTION_SEND_DATA,
+	IP0105_I2C_ACTION_RCV_DATA,
+	IP0105_I2C_ACTION_RCV_DATA_STOP,
+	IP0105_I2C_ACTION_SEND_STOP,
+} i2c_action;
+
+typedef enum {
+	IP0105_I2C_STATE_INVALID,     
+	IP0105_I2C_STATE_IDLE,        
+	IP0105_I2C_STATE_WAITING_FOR_START_COND,                                                         
+	IP0105_I2C_STATE_WAITING_FOR_RESTART,
+	IP0105_I2C_STATE_WAITING_FOR_ADDR_ACK,
+	IP0105_I2C_STATE_WAITING_FOR_SLAVE_ACK,
+	IP0105_I2C_STATE_WAITING_FOR_SLAVE_DATA,
+} i2c_state;
 
 struct i2c_ip0105_struct {
 	wait_queue_head_t	i2c_wait_master;
@@ -106,8 +118,17 @@ struct i2c_ip0105_struct {
 	struct i2c_adapter	ip0105_adap;
 	void __iomem		*base;
 	struct resource		*res;
-	struct i2c_algo_data	algo_data;
+	struct i2c_msg		*msg;
 	i2c_mode		mode;
+	i2c_action		action;
+	i2c_state		state;
+	u32			addr;
+	u32			bytes_left;
+	u32			byte_posn;
+	u32			send_stop;
+	u32			block;
+	u32			aborting;
+	spinlock_t		lock;
 };
 
 static __inline void staout(void __iomem *offset, int p)
@@ -179,325 +200,276 @@ static __inline void clear_i2c_interrupt(void __iomem *offset)
 	write_IP0105_I2C_INT_CLR(offset, 1);
 }
 
-static __inline void wait_ip0105_int(struct i2c_ip0105_struct *i2c_ip0105, int timeout)
+static void ip0105_i2c_do_action(struct i2c_ip0105_struct *i2c_ip0105)
 {
-	int t = timeout;
+	printk("ip0105_i2c_do_action(): ");
+	switch(i2c_ip0105->action) {
+	case IP0105_I2C_ACTION_SEND_RESTART:
+		printk("IP0105_I2C_ACTION_SEND_RESTART\n");
+		staout(i2c_ip0105->base, 1);
+		i2c_ip0105->block = 0;
+		clear_i2c_interrupt(i2c_ip0105->base);
+		wake_up_interruptible(&i2c_ip0105->i2c_wait_master);
+		break;
+	case IP0105_I2C_ACTION_SEND_START:
+		printk("IP0105_I2C_ACTION_SEND_START\n");
+		/* next event will be 0x08 */
+		staout(i2c_ip0105->base, 1);
+		clear_i2c_interrupt(i2c_ip0105->base);
+		break;
+	case IP0105_I2C_ACTION_SEND_ADDR:
+		printk("IP0105_I2C_ACTION_SEND_ADDR writing address 0x%x\n", i2c_ip0105->addr);
 
-	while(!(read_IP0105_I2C_INT_STATUS(i2c_ip0105->base) & IP0105_INTBIT) && t-- > 0);
-}
+		/* write address */
+		write_IP0105_I2C_DAT(i2c_ip0105->base, i2c_ip0105->addr);
+		/* next will be 0x28 */
 
-static __inline void wait_ip0105_sto_or_int(struct i2c_ip0105_struct *i2c_ip0105, int timeout)
-{
-	int t = timeout;
-	while(!(read_IP0105_I2C_INT_STATUS(i2c_ip0105->base) & IP0105_INTBIT) \
-			&&(read_IP0105_I2C_CONTROL(i2c_ip0105->base) & IP0105_STO) \
-			&&(t-->0));
-}
+		/* clear start flag */
+		staout(i2c_ip0105->base, 0);
+		clear_i2c_interrupt(i2c_ip0105->base);
+		break;
+	case IP0105_I2C_ACTION_RCV_DATA:
+		i2c_ip0105->msg->buf[i2c_ip0105->byte_posn++] = read_IP0105_I2C_DAT(i2c_ip0105->base);
+		printk("IP0105_I2C_ACTION_RCV_DATA reading byte msgbuf[%d] = %d (%d)\n", i2c_ip0105->byte_posn, i2c_ip0105->msg->buf[i2c_ip0105->byte_posn], i2c_ip0105->bytes_left);
 
-static void ip0105_reset(struct i2c_adapter *i2c_adap)
-{
-	struct i2c_ip0105_struct *i2c_ip0105;
-
-	i2c_ip0105 = i2c_get_adapdata(i2c_adap);
-
-	printk("device reset\n");
-	disable_i2c_interrupt(i2c_ip0105->base);
-	aaout(i2c_ip0105->base, 0);
-	staout(i2c_ip0105->base, 0);
-
-	wait_ip0105_int(i2c_ip0105, TIMEOUT);
-	if(read_IP0105_I2C_INT_STATUS(i2c_ip0105->base) & IP0105_INTBIT) {
-		unsigned int i2c_state;
-
-		i2c_state = read_IP0105_I2C_STATUS(i2c_ip0105->base);
-		if((i2c_state == 0x08) || (i2c_state == 0x10)) {
-			write_IP0105_I2C_DAT(i2c_ip0105, 0xEE);
-			clear_i2c_interrupt(i2c_ip0105->base);
-		} else if((i2c_state == 0x40) || (i2c_state == 0x50)) {
+		if ((i2c_ip0105->bytes_left == 1) || i2c_ip0105->aborting) {
+			printk("return no ack\n");
 			aaout(i2c_ip0105->base, 0);
-			clear_i2c_interrupt(i2c_ip0105->base);
+			/* dont return ACK after last byte reception */ 
+		} else {
+			printk("return ack\n");
+			aaout(i2c_ip0105->base, 1);
+			/* return ACK after byte reception */
 		}
-		wait_ip0105_int(i2c_ip0105, TIMEOUT);
-		stoout(i2c_ip0105->base, 1);
+
 		clear_i2c_interrupt(i2c_ip0105->base);
 
-		wait_ip0105_int(i2c_ip0105, TIMEOUT);
-		wait_ip0105_sto_or_int(i2c_ip0105, TIMEOUT);
-	} else {
-		stoout(i2c_ip0105->base, 1);
+		break;
+	case IP0105_I2C_ACTION_SEND_DATA:
+		printk("IP0105_I2C_ACTION_SEND_DATA data byte %x\n",
+				i2c_ip0105->msg->buf[i2c_ip0105->byte_posn]);
+		write_IP0105_I2C_DAT(i2c_ip0105->base,
+				i2c_ip0105->msg->buf[i2c_ip0105->byte_posn++]);
 		clear_i2c_interrupt(i2c_ip0105->base);
-
-		wait_ip0105_sto_or_int(i2c_ip0105, TIMEOUT);
-	}
-
-	if(read_IP0105_I2C_CONTROL(i2c_ip0105->base) & IP0105_STO) {
-//		assert(false);
-	}
-
-	disable_i2c_controller(i2c_ip0105->base);
-	disable_i2c_interrupt(i2c_ip0105->base);
-	aaout(i2c_ip0105->base, 0);
-	staout(i2c_ip0105->base, 0);
-	clear_i2c_interrupt(i2c_ip0105->base);
-
-	enable_i2c_controller(i2c_ip0105->base);
-	enable_i2c_interrupt(i2c_ip0105->base);
-	//if(i2c_ip0105->slv_enabled == TRUE) { aaout(i2c_ip0105->base, 1); }
-}
-
-static __inline void i2c_interrupt_master_transmitter(struct i2c_ip0105_struct *i2c_ip0105, int i2c_state)
-{
-	int mst_addr;
-	struct i2c_algo_data *algo_data = &i2c_ip0105->algo_data;
-
-	switch (i2c_state) {
-		case 0x10:
-			printk("should not be reached: line: %d\n", __LINE__);
-			if ((algo_data->mst_txbufindex < algo_data->mst_txbuflen) ||
-				(algo_data->mst_rxbufindex == algo_data->mst_rxbuflen)) {
-				mst_addr = (algo_data->mst_address & 0xFE);
-				write_IP0105_I2C_DAT(i2c_ip0105->base, mst_addr);
-			}
-			break;
-		case 0x18:
-		case 0x28:
-			printk("%s %d\n", __func__, __LINE__);
-			if (algo_data->mst_txbufindex < algo_data->mst_txbuflen) {
-				write_IP0105_I2C_DAT(i2c_ip0105->base, *(algo_data->mst_txbuf+algo_data->mst_txbufindex));
-				algo_data->mst_txbufindex++;
-				/* disable repeast of START condition */
-				staout(i2c_ip0105->base, 0);
-			}
-			clear_i2c_interrupt(i2c_ip0105->base);
-			break;
-		case 0x20:
-			printk("%s %d\n", __func__, __LINE__);
-		case 0x30:
-			printk("%s %d\n", __func__, __LINE__);
-			staout(i2c_ip0105->base, 0);
-			stoout(i2c_ip0105->base, 1);
-			//i2c_ip0105->mst_status = 
-			i2c_ip0105->mode = I2C_IP0105_MODE_IDLE;
-			clear_i2c_interrupt(i2c_ip0105->base);
-			printk("wakeup\n");
-			wake_up_interruptible(&(i2c_ip0105->i2c_wait_master));
-			break;
-		case 0x38:
-			printk("%s %d\n", __func__, __LINE__);
-			break;
-		case 0x68:
-			printk("%s %d\n", __func__, __LINE__);
-			break;
-		case 0xB0:
-			printk("%s %d\n", __func__, __LINE__);
-			break;
-		case 0x70:
-			printk("%s %d\n", __func__, __LINE__);
-			break;
-		case 0x78:
-			printk("%s %d\n", __func__, __LINE__);
-			break;
-		default:
-			printk("%s %d\n", __func__, __LINE__);
-			break;
+		break;
+	case IP0105_I2C_ACTION_RCV_DATA_STOP:
+		printk("IP0105_I2C_ACTION_RCV_DATA_STOP\n");
+		/* START flag down, STOP up */
+		stoout(i2c_ip0105->base, 0);
+		staout(i2c_ip0105->base, 1);
+		i2c_ip0105->block = 0;
+		clear_i2c_interrupt(i2c_ip0105->base);
+		wake_up_interruptible(&i2c_ip0105->i2c_wait_master);
+		break;
+	default:
+		printk("default\n");
+		clear_i2c_interrupt(i2c_ip0105->base);
+		printk("ip0105_i2c_do_action(): reached default\n");
+	case IP0105_I2C_ACTION_SEND_STOP:
+		printk("IP0105_I2C_ACTION_SEND_STOP\n");
+		staout(i2c_ip0105->base, 0);
+		stoout(i2c_ip0105->base, 1);
+		i2c_ip0105->block = 0;
+		clear_i2c_interrupt(i2c_ip0105->base);
+		wake_up_interruptible(&i2c_ip0105->i2c_wait_master);
+		break;
 	}
 }
-static __inline void i2c_interrupt_idle(struct i2c_ip0105_struct *i2c_ip0105, int i2c_state)
-{
-	int mst_addr;
-	struct i2c_algo_data *algo_data = &i2c_ip0105->algo_data;
 
-	switch(i2c_state) {
-		case 0x08:
-			printk("0x08\n");
-
-			printk("%s %d\n", __func__, __LINE__);
-			if ((algo_data->mst_txbufindex < algo_data->mst_txbuflen) ||
-				(algo_data->mst_rxbufindex == algo_data->mst_rxbuflen)) {
-				printk("%s %d\n", __func__, __LINE__);
-				mst_addr = (algo_data->mst_address & 0xFE);
-				/* Read bit cleared */
-				printk("START TRANSMITTED, Read bit cleared addr = %x\n", mst_addr);
-				write_IP0105_I2C_DAT(i2c_ip0105->base, mst_addr);
-				i2c_ip0105->mode = I2C_IP0105_MODE_MASTER_TRANSMITTER;
-			} else {
-				printk("%s %d\n", __func__, __LINE__);
-				mst_addr = ((algo_data->mst_address & 0xFE) | 0x01);
-				/* Read bit set */
-				write_IP0105_I2C_DAT(i2c_ip0105->base, mst_addr);
-				printk("START TRANSMITTED, Read bit set(%x)\n", mst_addr);
-				i2c_ip0105->mode = I2C_IP0105_MODE_MASTER_RECEIVER;
-			}
-			/* Clear STA flag */
-			staout(i2c_ip0105->base, 0);
-			clear_i2c_interrupt(i2c_ip0105->base);
-			break;
-		case 0x60:
-			printk("0x60\n");
-			break;
-		case 0xA8:
-			printk("0xA8\n");
-			break;
-		case 0x70:
-			printk("0x70\n");
-			break;
-		case 0x78:
-			printk("0x78\n");
-			break;
-		default:
-			printk("hardware error\n");
-			break;
-	}
-}
 static irqreturn_t i2c_ip0105_isr(int irq, void *dev_id)
 {
+	unsigned long flags;
 	int i2c_state;
 	struct i2c_ip0105_struct *i2c_ip0105 = (struct i2c_ip0105_struct *)dev_id;
 
+	spin_lock_irqsave(&(i2c_ip0105->lock), flags);
+
 	i2c_state = read_IP0105_I2C_STATUS(i2c_ip0105->base);
-	switch(i2c_ip0105->mode) {
-		case I2C_IP0105_MODE_IDLE:
-			printk("%s %d\n", __func__, __LINE__);
-			i2c_interrupt_idle(i2c_ip0105, i2c_state);
-			printk("%s %d\n", __func__, __LINE__);
+	switch(i2c_state) {
+		/* start condition interrupt */
+		case 0x08: /* master start */
+		case 0x10: /* repeat start */
+			printk("isr(): %sstart interrupt 0x%x\n",i2c_state==0x08?"":"repeated ",i2c_state);
+			i2c_ip0105->action = IP0105_I2C_ACTION_SEND_ADDR;
+			i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_ADDR_ACK;
 			break;
-		case I2C_IP0105_MODE_MASTER_TRANSMITTER:
-			printk("%s %d\n", __func__, __LINE__);
-			i2c_interrupt_master_transmitter(i2c_ip0105, i2c_state);
-			printk("I2C_IP0105_MODE_MASTER_TRANSMITTER\n");
+		case 0x58:
+			printk("isr(): master read data no ack\n");
+			i2c_ip0105->action = IP0105_I2C_ACTION_RCV_DATA_STOP;
+			i2c_ip0105->state = IP0105_I2C_STATE_IDLE;
 			break;
-		case I2C_IP0105_MODE_MASTER_RECEIVER:
-			printk("I2C_IP0105_MODE_MASTER_RECEIVER\n");
+		case 0x18:
+		case 0x28: /* ACK received */
+			printk("isr(): data_byte transmitted. ACK received (0x%x)\n", i2c_state);
+			if((i2c_ip0105->bytes_left == 0) ||
+					(i2c_ip0105->aborting &&
+					 i2c_ip0105->byte_posn != 0)) {
+				if(i2c_ip0105->send_stop) {
+					printk("isr(): no bytes left... send_stop\n");
+					i2c_ip0105->action = IP0105_I2C_ACTION_SEND_STOP;
+					i2c_ip0105->state = IP0105_I2C_STATE_IDLE;
+				} else {
+					printk("isr(): no bytes left... !send_stop\n");
+					i2c_ip0105->action = IP0105_I2C_ACTION_SEND_RESTART;
+					i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_RESTART;
+				}
+			} else {
+				printk("isr(): bytes_left: send more data\n");
+				staout(i2c_ip0105->base, 0);
+				i2c_ip0105->action = IP0105_I2C_ACTION_SEND_DATA;
+				i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_SLAVE_ACK;
+				i2c_ip0105->bytes_left--;
+			}
+			clear_i2c_interrupt(i2c_ip0105->base);
 			break;
-		case I2C_IP0105_MODE_SLAVE_TRANSMITTER:
-			printk("I2C_IP0105_MODE_SLAVE_TRANSMITTER\n");
+		case 0x40:
+			printk("isr(): master read address ack\n");
+			if(i2c_ip0105->byte_posn < (i2c_ip0105->msg->len - 1)) {
+				aaout(i2c_ip0105->base, 1);
+			} else {
+				aaout(i2c_ip0105->base, 0);
+			}
+			staout(i2c_ip0105->base, 0);
+			clear_i2c_interrupt(i2c_ip0105->base);
 			break;
-		case I2C_IP0105_MODE_SLAVE_RECEIVER:
-			printk("I2C_IP0105_SLAVE_RECEIVER\n");
+		case 0x50: /* master read data ack */
+			printk("isr(): receiving ack for data byte\n");
+			i2c_ip0105->action = IP0105_I2C_ACTION_RCV_DATA;
+			i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_SLAVE_DATA;
+			i2c_ip0105->bytes_left--;
+			break;
+		case 0x20:
+		case 0x30:
+		case 0x48:
+			printk("isr(): no device on the other end\n");
+			i2c_ip0105->action = IP0105_I2C_ACTION_RCV_DATA_STOP;
+			i2c_ip0105->state = IP0105_I2C_STATE_IDLE;
+			clear_i2c_interrupt(i2c_ip0105->base);
+			break;
+		default:
+			clear_i2c_interrupt(i2c_ip0105->base);
+			printk("isr(): other condition reached: 0x%x\n", i2c_state);
 			break;
 	}
+
+	ip0105_i2c_do_action(i2c_ip0105);
+	spin_unlock_irqrestore(&(i2c_ip0105->lock), flags);
 
 	return IRQ_HANDLED;
 }
 
+static void ip0105_i2c_wait_for_completion(struct i2c_ip0105_struct *i2c_ip0105)
+{
+	long		time_left;
+	unsigned long	flags;
+	char		abort = 0;
 
+	printk("ip0105_i2c_wait_for_completion(): started\n");
 
-static unsigned int i2c_write_read(struct i2c_adapter * i2c_adap, int address,
-		void *msgwram, int lenw, void *msgr, int lenr) {
-	int retval = 0;
-	struct i2c_algo_data *i2c_algo;
-	struct i2c_ip0105_struct *i2c_ip0105;
+	time_left = wait_event_interruptible_timeout(i2c_ip0105->i2c_wait_master,
+			!i2c_ip0105->block, i2c_ip0105->ip0105_adap.timeout);
 
-	i2c_algo = i2c_adap->algo_data;
-	i2c_ip0105 = i2c_get_adapdata(i2c_adap);
+	spin_lock_irqsave(&(i2c_ip0105->lock), flags);
 
-	i2c_algo->mst_status		= errids_ok;
-	i2c_algo->mst_address		= address;
-	i2c_algo->mst_txbuflen		= lenw;
-	i2c_algo->mst_txbufindex	= 0;
-	i2c_algo->mst_rxbuf		= msgr;
-	i2c_algo->mst_rxbufindex	= 0;
+	if (time_left <= 0)
+		abort = 1;
 
-	if (msgwram)
-		i2c_algo->mst_txbuf = msgwram;
-	else
-		i2c_algo->mst_txbuflen = 0;
+	if (abort && i2c_ip0105->block) {
+		i2c_ip0105->aborting = 1;
+		spin_unlock_irqrestore(&(i2c_ip0105->lock), flags);
 
-	if (msgr)
-		i2c_algo->mst_rxbuflen = lenr;
-	else
-		i2c_algo->mst_rxbuflen = 0;
+		time_left = wait_event_timeout(i2c_ip0105->i2c_wait_master,
+			!i2c_ip0105->block, i2c_ip0105->ip0105_adap.timeout);
 
-	staout(i2c_ip0105->base, 1);
+		if ((time_left <= 0) && i2c_ip0105->block) {
+			i2c_ip0105->state = IP0105_I2C_STATE_IDLE;
+			dev_err(&i2c_ip0105->ip0105_adap.dev,
+					"ip0105: I2C bus locked, block: %d, "
+					"time_left: %d\n", i2c_ip0105->block,
+					(int)time_left);
+			// XXX dont just printf
+			printk("reset hardware\n");
+		}
+	} else
+		spin_unlock_irqrestore(&(i2c_ip0105->lock), flags);
 
-	// XXX why 5HZ??
-	printk("go to sleep\n");
-	retval = interruptible_sleep_on_timeout(&(i2c_ip0105->i2c_wait_master), (50*HZ));
-	if (!retval) {
-		// XXX output
-		//dev_dbg(&i2c_adap->dev, "i2c status 0x%x, int stat %x\n");
-		return errids_i2cHardwareError;
+	printk("ip0105_i2c_wait_for_completion(): completed\n");
+}
+
+static int ip0105_i2c_execute_msg(struct i2c_ip0105_struct *i2c_ip0105,
+		struct i2c_msg *msg, int is_first, int is_last)
+{
+	unsigned long flags;
+	static int var = 0;
+	int dir = 0;
+
+	spin_lock_irqsave(&(i2c_ip0105->lock), flags);
+
+	i2c_ip0105->msg = msg;
+	i2c_ip0105->byte_posn = 0;
+	i2c_ip0105->bytes_left = msg->len;
+	i2c_ip0105->aborting = 0;
+
+	if(msg->flags & I2C_M_RD) {
+		dir = 1;
 	}
 
+	i2c_ip0105->addr = ((u32)msg->addr & 0x7f) << 1 | dir;
 
-	return i2c_algo->mst_status;
+	printk("ip0105_i2c_execute_msg() is_first: %d, is_last: %d\n", is_first, is_last);
+	if(msg->flags & I2C_M_NOSTART) {
+		if(i2c_ip0105->msg->flags & I2C_M_RD) {
+			/* no action to do, wait for slave to send a byte */
+			i2c_ip0105->action = IP0105_I2C_ACTION_CONTINUE;
+			i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_SLAVE_DATA;
+		} else {
+			i2c_ip0105->action = IP0105_I2C_ACTION_SEND_DATA;
+			i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_SLAVE_ACK;
+			i2c_ip0105->bytes_left--;
+		}
+		printk("reached I2C_M_NOSTART\n");
+	} else {
+		if(is_first) {
+			i2c_ip0105->action = IP0105_I2C_ACTION_SEND_START;
+			i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_START_COND;
+		} else {
+			i2c_ip0105->action = IP0105_I2C_ACTION_SEND_ADDR;
+			i2c_ip0105->state = IP0105_I2C_STATE_WAITING_FOR_ADDR_ACK;
+		}
+	}
+
+	i2c_ip0105->send_stop = is_last;
+	i2c_ip0105->block = 1;
+	ip0105_i2c_do_action(i2c_ip0105);
+
+	spin_unlock_irqrestore(&(i2c_ip0105->lock), flags);
+
+	ip0105_i2c_wait_for_completion(i2c_ip0105);
+	
+	return 1;
 }
 
 static int i2c_ip0105_xfer(struct i2c_adapter *adapter,
 		struct i2c_msg *msgs, int num)
 {
-	struct i2c_msg *pmsg;
-	void * rd_buf = NULL;
-	void * wr_buf = NULL;
-	int i, wr_len = 0, rd_len = 0;
-	unsigned char addr = msgs[0].addr;
-	int ret=0;
+	int i, ret;
+	struct i2c_ip0105_struct *i2c_ip0105;
 
+	i2c_ip0105 = i2c_get_adapdata(adapter);
 
-	printk("i2c_ip0105_xfer(): num = %d\n", num);
 	for (i = 0; i < num; i++) {
-		pmsg = &msgs[i];
-
-		if (i == 0) {
-			if (pmsg->flags & I2C_M_TEN) {
-				printk("received a 10bit address: %x\n", addr);
-				/* addr = 10 bit addr not supported */
-			} else {
-				printk("received a 7bit address: %x\n", addr);
-				/* addr = 7 bit addr */
-				addr &= 0x7f;
-				addr <<= 1;
-			}
-		}
-		if (pmsg->flags & I2C_M_RD) {
-			/* read bytes into buffer*/
-			rd_buf = pmsg->buf;
-			rd_len = pmsg->len;
-		} else {
-			/* write bytes from buffer */
-			wr_buf = pmsg->buf;
-			wr_len = pmsg->len;
-		}
+		printk("i2c_ip0105_xfer(): i = %d/%d\n", i, num);
+		ret = ip0105_i2c_execute_msg(i2c_ip0105, &msgs[i], i == 0, i+1 == num);
+		if (ret < 0)
+			return ret;
 	}
-	if (num != 0) {
-		switch(ret = i2c_write_read(adapter, addr, wr_buf, wr_len, rd_buf, rd_len)) {
-			case errids_ok:
-				break;
-			case errids_i2cHardwareError:
-				num = -1;
-				printk("%s() %d\n", __func__, __LINE__);
-				ip0105_reset(adapter);
-				printk("%s() %d\n", __func__, __LINE__);
-				break;
-			case errids_i2cDeviceError:
-				num = -1;
-				printk("%s() %d\n", __func__, __LINE__);
-				ip0105_reset(adapter);
-				printk("%s() %d\n", __func__, __LINE__);
-				break;
-			case errids_i2cWriteError:
-				num = -1;
-				printk("%s() %d\n", __func__, __LINE__);
-				ip0105_reset(adapter);
-				printk("%s() %d\n", __func__, __LINE__);
-				break;
-			default:
-				num = -1;
-				printk("%s() %d\n", __func__, __LINE__);
-				ip0105_reset(adapter);
-				printk("%s() %d\n", __func__, __LINE__);
-				break;
-		}
-	}
-
-	//printk("i2c_ip0105_xfer num %d\n", num);
 
 	return num;
 }
 
 static u32 i2c_ip0105_func(struct i2c_adapter *adapter)
 {
-	return I2C_FUNC_SMBUS_EMUL | I2C_FUNC_10BIT_ADDR |
+	return I2C_FUNC_SMBUS_EMUL | //I2C_FUNC_10BIT_ADDR |
 		I2C_FUNC_PROTOCOL_MANGLING;
 }
 
@@ -536,6 +508,7 @@ static int __devinit i2c_ip0105_probe(struct platform_device *pdev)
 	}
 
 	init_waitqueue_head(&(i2c_ip0105->i2c_wait_master));
+	spin_lock_init(&(i2c_ip0105->lock));
 
 	i2c_ip0105->irq = platform_get_irq(pdev, 0);
 	if (i2c_ip0105->irq < 0) {
@@ -572,9 +545,9 @@ static int __devinit i2c_ip0105_probe(struct platform_device *pdev)
 	i2c_ip0105->ip0105_adap.algo		= &i2c_ip0105_algo;
 	i2c_ip0105->ip0105_adap.dev.parent	= &pdev->dev;
 	i2c_ip0105->ip0105_adap.nr		= pdev->id;
+	i2c_ip0105->ip0105_adap.timeout		= msecs_to_jiffies(500);
 	i2c_ip0105->res				= res;
 	/* XXX neccessary ??? */
-	i2c_ip0105->ip0105_adap.algo_data	= &i2c_ip0105->algo_data;
 	/*i2c_ip0105->irq			= i2c_ip0105->irq;*/
 	/*i2c_ip0105->base			= base;*/
 
