@@ -21,6 +21,8 @@
 #include <linux/serial_pnx8xxx.h>
 #include <linux/platform_device.h>
 
+#include <linux/i2c-pnx0105.h>
+
 #include <int.h>
 #include <usb.h>
 #include <uart.h>
@@ -58,6 +60,32 @@ static struct resource pnx8550_uart_resources[] = {
 	[3] = {
 		.start		= PNX8550_UART_INT(1),
 		.end		= PNX8550_UART_INT(1),
+		.flags		= IORESOURCE_IRQ,
+	},
+};
+
+static struct resource pnx8550_i2c0_resources[] = {
+	{
+		.start		= 0x1BE69000,
+		.end		= 0x1BE69FFF,
+		.flags		= IORESOURCE_MEM,
+	},
+	{
+		.start		= PNX8550_INT_I2C3,
+		.end		= PNX8550_INT_I2C3,
+		.flags		= IORESOURCE_IRQ,
+	},
+};
+
+static struct resource pnx8550_i2c1_resources[] = {
+	{
+		.start		= 0x1BE4C000,
+		.end		= 0x1BE4CFFF,
+		.flags		= IORESOURCE_MEM,
+	},
+	{
+		.start		= PNX8550_INT_I2C4,
+		.end		= PNX8550_INT_I2C4,
 		.flags		= IORESOURCE_IRQ,
 	},
 };
@@ -119,9 +147,44 @@ static struct platform_device pnx8550_uart_device = {
 	.resource	= pnx8550_uart_resources,
 };
 
+#if 0
+static struct i2c_pnx0105_dev pnx8550_i2c_dev[] = {
+	{
+		.clock = 6,	/* 0 == 400 kHz, 4 == 100 kHz(Maximum HDMI), 6 = 50kHz(Preferred HDCP) */
+		.bus_addr = 0,	/* no slave support */
+	},
+	{
+		.clock = 4,	/* 0 == 400 kHz, 4 == 100 kHz. 100 kHz seems a safe default for now */
+		.bus_addr = 0,	/* no slave support */
+	},
+};
+#endif
+
+static struct platform_device pnx8550_i2c0_device = {
+	.name		= "IP0105",
+	.id		= 0,
+	/*.dev = {
+		.platform_data = &pnx8550_i2c_dev[0],
+	},*/
+	.num_resources  = ARRAY_SIZE(pnx8550_i2c0_resources),
+	.resource	= pnx8550_i2c0_resources,
+};
+
+static struct platform_device pnx8550_i2c1_device = {
+	.name		= "IP0105",
+	.id		= 1,
+	/*.dev = {
+		.platform_data = &pnx8550_i2c_dev[1],
+	},*/
+	.num_resources  = ARRAY_SIZE(pnx8550_i2c1_resources),
+	.resource	= pnx8550_i2c1_resources,
+};
+
 static struct platform_device *pnx8550_platform_devices[] __initdata = {
 	&pnx8550_usb_ohci_device,
 	&pnx8550_uart_device,
+	&pnx8550_i2c0_device,
+	&pnx8550_i2c1_device,
 };
 
 static int __init pnx8550_platform_init(void)
